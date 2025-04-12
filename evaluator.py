@@ -23,8 +23,6 @@ from scipy.special import softmax
 from torchvision.models import inception_v3
 from tqdm.auto import tqdm
 
-import dnnlib
-
 INCEPTION_V3_URL = "https://openaipublic.blob.core.windows.net/diffusion/jul-2021/ref_batches/classify_image_graph_def.pb"
 INCEPTION_V3_PATH = "classify_image_graph_def.pb"
 
