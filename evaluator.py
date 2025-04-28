@@ -50,12 +50,12 @@ def main():
     ref_stats, ref_stats_spatial = evaluator.read_statistics(args.ref_batch, ref_acts)
 
     print("computing sample batch activations...")
-    sample_acts = evaluator.read_activations(args.sample_batch)
+    sample_acts = evaluator.read_activations(args.sample_batch, use_v3=True)
     print("computing/reading sample batch statistics...")
-    sample_stats, sample_stats_spatial = evaluator.read_statistics(args.sample_batch, sample_acts)
+    sample_stats, sample_stats_spatial = evaluator.read_statistics(args.sample_batch, sample_acts[:2])
 
     print("Computing evaluations...")
-    print("Inception Score:", evaluator.compute_inception_score(sample_acts[0]))
+    print("Inception Score:", evaluator.compute_inception_score(sample_acts[2]))
     print("FID:", sample_stats.frechet_distance(ref_stats))
     print("sFID:", sample_stats_spatial.frechet_distance(ref_stats_spatial))
     prec, recall = evaluator.compute_prec_recall(ref_acts[0], sample_acts[0])
@@ -132,22 +132,27 @@ class Evaluator:
 
         self.inception = InceptionV3([3]).to(device)
         self.inception.eval()
-        self.inception_v3 = inception_v3(pretrained=True).to(device)
+        self.inception_v3 = inception_v3(pretrained=True, transform_input=False).to(device)
         self.inception_v3.eval()
+
+        self.features = []
+        def get_features(model, input, output):
+            self.features.append(output)
+        self.inception_v3.avgpool.register_forward_hook(get_features)
 
         self.spatial_features = []
         def get_spatial_features(model, input, output):
             self.spatial_features.append(output)
-        self.inception.blocks[2][7].register_forward_hook(get_spatial_features)
+        self.inception_v3.Mixed_6d.branch1x1.register_forward_hook(get_spatial_features)
 
     def warmup(self):
         self.compute_activations(np.zeros([1, 8, 64, 64, 3]))
 
-    def read_activations(self, npz_path: str) -> Tuple[np.ndarray, np.ndarray]:
+    def read_activations(self, npz_path: str, use_v3: bool = False) -> Tuple[np.ndarray, np.ndarray]:
         with open_npz_array(npz_path, "arr_0") as reader:
-            return self.compute_activations(reader.read_batches(self.batch_size))
+            return self.compute_activations(reader.read_batches(self.batch_size), use_v3)
 
-    def compute_activations(self, batches: Iterable[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_activations(self, batches: Iterable[np.ndarray], use_v3: bool = False) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute image features for downstream evals.
 
@@ -157,17 +162,29 @@ class Evaluator:
         """
         preds = []
         spatial_preds = []
+        if use_v3:
+            preds_v3 = []
         for batch in tqdm(batches):
             batch = torch.from_numpy(batch.astype(np.float32))
             batch = batch.permute(0, 3, 1, 2)
             batch = batch / 255.0
             batch = batch.to(self.device)
+            batch_v3 = F.interpolate(batch, size=(299, 299), mode="bilinear", align_corners=False)
+            batch_v3 = batch_v3 * 2.0 - 1.0
             with torch.no_grad():
                 pred = self.inception(batch)[0].detach().cpu().numpy()
-            spatial_pred = self.spatial_features.pop()[:, :7, :, :].detach().cpu().numpy()
+                self.inception_v3(batch_v3)
+            spatial_pred = self.spatial_features.pop()[:, :7, :, :].detach().cpu().numpy()  
             preds.append(pred.reshape([pred.shape[0], -1]))
             spatial_preds.append(spatial_pred.reshape([spatial_pred.shape[0], -1]))
+            if use_v3:
+                pred_v3 = self.features.pop().detach().cpu().numpy()
+                preds_v3.append(pred_v3.reshape([pred_v3.shape[0], -1]))
         return (
+            np.concatenate(preds, axis=0),
+            np.concatenate(spatial_preds, axis=0),
+            np.concatenate(preds_v3, axis=0),
+        ) if use_v3 else (
             np.concatenate(preds, axis=0),
             np.concatenate(spatial_preds, axis=0),
         )
