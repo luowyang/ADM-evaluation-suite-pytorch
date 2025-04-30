@@ -81,7 +81,7 @@ computing/reading sample batch statistics...
 Computing evaluations...
 Inception Score: 215.00064086914062
 FID: 3.943349109375731
-sFID: 299.1543291933718
+sFID: 334.91596248654037
 Precision: 0.82588
 Recall: 0.5282
 ```
