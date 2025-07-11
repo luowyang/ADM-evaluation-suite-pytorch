@@ -57,31 +57,21 @@ Next, run the `evaluator.py` script. The requirements of this script can be foun
 The output of the script will look something like this, where the first `...` is a bunch of verbose TensorFlow logging:
 
 ```
-$ python evaluator_tf.py VIRTUAL_imagenet256_labeled.npz admnet_guided_upsampled_imagenet256.npz
+$ python evaluator_tf.py VIRTUAL_imagenet128_labeled.npz admnet_guided_imagenet128.npz
 ...
-computing reference batch activations...
-computing/reading reference batch statistics...
-computing sample batch activations...
-computing/reading sample batch statistics...
-Computing evaluations...
-Inception Score: 215.8370361328125
-FID: 3.9425574129223264
-sFID: 6.140433703346162
-Precision: 0.8265
-Recall: 0.5309
+Inception Score: 141.4766845703125
+FID: 2.9732886821580564
+sFID: 5.094563920911128
+Precision: 0.78138
+Recall: 0.5929
 ```
 
 ```
-$ python evaluator.py VIRTUAL_imagenet256_labeled.npz admnet_guided_upsampled_imagenet256.npz
+$ python evaluator.py VIRTUAL_imagenet128_labeled.npz admnet_guided_imagenet128.npz
 ...
-computing reference batch activations...
-computing/reading reference batch statistics...
-computing sample batch activations...
-computing/reading sample batch statistics...
-Computing evaluations...
-Inception Score: 215.00064086914062
-FID: 3.943349109375731
-sFID: 334.91596248654037
-Precision: 0.82588
-Recall: 0.5282
+Inception Score: 141.47805786132812
+FID: 2.973282624239573
+sFID: 5.093503562536171
+Precision: 0.78042
+Recall: 0.5906
 ```
