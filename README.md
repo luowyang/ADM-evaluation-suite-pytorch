@@ -105,3 +105,7 @@ sFID: 5.093503562536171
 Precision: 0.78042
 Recall: 0.5906
 ```
+
+## Acknowledgments
+
+Thank [@luowyang](https://github.com/luowyang) for fixing sFID bug of the ADM evaluation suite.
