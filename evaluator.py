@@ -30,11 +30,6 @@ def main():
     torch.set_grad_enabled(False)
     evaluator = Evaluator(device)
 
-    print("warming up TensorFlow...")
-    # This will cause TF to print a bunch of verbose stuff now rather
-    # than after the next print(), to help prevent confusion.
-    evaluator.warmup()
-
     print("computing reference batch activations...")
     ref_acts = evaluator.read_activations(args.ref_batch)
     print("computing/reading reference batch statistics...")
@@ -128,9 +123,6 @@ class Evaluator:
         def get_spatial_features(model, input, output):
             self.spatial_features.append(output)
         self.inception.Mixed_6d.branch1x1.register_forward_hook(get_spatial_features)
-
-    def warmup(self):
-        self.compute_activations(np.zeros([1, 8, 64, 64, 3], dtype=np.uint8))
 
     def read_activations(self, npz_path: str) -> Tuple[np.ndarray, np.ndarray]:
         with open_npz_array(npz_path, "arr_0") as reader:
@@ -237,13 +229,6 @@ class ManifoldEstimator:
         self.num_nhoods = len(nhood_sizes)
         self.clamp_to_percentile = clamp_to_percentile
         self.eps = eps
-
-    def warmup(self):
-        feats, radii = (
-            np.zeros([1, 2048], dtype=np.float32),
-            np.zeros([1, 1], dtype=np.float32),
-        )
-        self.evaluate_pr(feats, radii, feats, radii)
 
     def manifold_radii(self, features: np.ndarray) -> np.ndarray:
         num_images = len(features)
