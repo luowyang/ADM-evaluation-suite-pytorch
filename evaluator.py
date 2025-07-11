@@ -1,8 +1,9 @@
+"""PyTorch equaivalent to ADM's evaluation suit at <https://github.com/openai/guided-diffusion/tree/main/evaluations>.
+
+Modified from <https://github.com/lavinal712/ADM-evaluation-suite-pytorch/tree/main>.
+"""
 import argparse
 import io
-import os
-import pickle
-import random
 import warnings
 import zipfile
 from abc import ABC, abstractmethod
@@ -13,21 +14,10 @@ from multiprocessing.pool import ThreadPool
 from typing import Iterable, Optional, Tuple
 
 import numpy as np
-import requests
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from pytorch_fid.inception import InceptionV3
+from torch_fidelity.feature_extractor_inceptionv3 import FeatureExtractorInceptionV3
 from scipy import linalg
-from scipy.special import softmax
-from torchvision.models import inception_v3
 from tqdm.auto import tqdm
-
-INCEPTION_V3_URL = "https://openaipublic.blob.core.windows.net/diffusion/jul-2021/ref_batches/classify_image_graph_def.pb"
-INCEPTION_V3_PATH = "classify_image_graph_def.pb"
-
-FID_POOL_NAME = "pool_3:0"
-FID_SPATIAL_NAME = "mixed_6/conv:0"
 
 
 def main():
@@ -37,6 +27,7 @@ def main():
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.set_grad_enabled(False)
     evaluator = Evaluator(device)
 
     print("warming up TensorFlow...")
@@ -50,12 +41,12 @@ def main():
     ref_stats, ref_stats_spatial = evaluator.read_statistics(args.ref_batch, ref_acts)
 
     print("computing sample batch activations...")
-    sample_acts = evaluator.read_activations(args.sample_batch, use_v3=True)
+    sample_acts = evaluator.read_activations(args.sample_batch)
     print("computing/reading sample batch statistics...")
-    sample_stats, sample_stats_spatial = evaluator.read_statistics(args.sample_batch, sample_acts[:2])
+    sample_stats, sample_stats_spatial = evaluator.read_statistics(args.sample_batch, sample_acts)
 
     print("Computing evaluations...")
-    print("Inception Score:", evaluator.compute_inception_score(sample_acts[2]))
+    print("Inception Score:", evaluator.compute_inception_score(sample_acts[0]))
     print("FID:", sample_stats.frechet_distance(ref_stats))
     print("sFID:", sample_stats_spatial.frechet_distance(ref_stats_spatial))
     prec, recall = evaluator.compute_prec_recall(ref_acts[0], sample_acts[0])
@@ -96,7 +87,7 @@ class FIDStatistics:
         diff = mu1 - mu2
 
         # product might be almost singular
-        covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+        covmean = linalg.sqrtm(sigma1.dot(sigma2))
         if not np.isfinite(covmean).all():
             msg = (
                 "fid calculation produces singular product; adding %s to diagonal of cov estimates"
@@ -130,29 +121,22 @@ class Evaluator:
         self.softmax_batch_size = softmax_batch_size
         self.manifold_estimator = ManifoldEstimator(device)
 
-        self.inception = InceptionV3([3]).to(device)
+        self.inception = FeatureExtractorInceptionV3("inception_model", ["2048"]).to(device)
         self.inception.eval()
-        self.inception_v3 = inception_v3(pretrained=True, transform_input=False).to(device)
-        self.inception_v3.eval()
-
-        self.features = []
-        def get_features(model, input, output):
-            self.features.append(output)
-        self.inception_v3.avgpool.register_forward_hook(get_features)
 
         self.spatial_features = []
         def get_spatial_features(model, input, output):
             self.spatial_features.append(output)
-        self.inception_v3.Mixed_6d.branch1x1.register_forward_hook(get_spatial_features)
+        self.inception.Mixed_6d.branch1x1.register_forward_hook(get_spatial_features)
 
     def warmup(self):
-        self.compute_activations(np.zeros([1, 8, 64, 64, 3]))
+        self.compute_activations(np.zeros([1, 8, 64, 64, 3], dtype=np.uint8))
 
-    def read_activations(self, npz_path: str, use_v3: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+    def read_activations(self, npz_path: str) -> Tuple[np.ndarray, np.ndarray]:
         with open_npz_array(npz_path, "arr_0") as reader:
-            return self.compute_activations(reader.read_batches(self.batch_size), use_v3)
+            return self.compute_activations(reader.read_batches(self.batch_size))
 
-    def compute_activations(self, batches: Iterable[np.ndarray], use_v3: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+    def compute_activations(self, batches: Iterable[np.ndarray]) -> Tuple[np.ndarray, np.ndarray]:
         """
         Compute image features for downstream evals.
 
@@ -162,29 +146,14 @@ class Evaluator:
         """
         preds = []
         spatial_preds = []
-        if use_v3:
-            preds_v3 = []
         for batch in tqdm(batches):
-            batch = torch.from_numpy(batch.astype(np.float32))
-            batch = batch.permute(0, 3, 1, 2)
-            batch = batch / 255.0
-            batch = batch.to(self.device)
-            batch_v3 = F.interpolate(batch, size=(299, 299), mode="bilinear", align_corners=False)
-            batch_v3 = batch_v3 * 2.0 - 1.0
-            with torch.no_grad():
-                pred = self.inception(batch)[0].detach().cpu().numpy()
-                self.inception_v3(batch_v3)
-            spatial_pred = self.spatial_features.pop()[:, :7, :, :].detach().cpu().numpy()  
-            preds.append(pred.reshape([pred.shape[0], -1]))
+            batch = torch.from_numpy(batch).permute(0, 3, 1, 2).to(self.device)
+            with torch.inference_mode():
+                pred, = self.inception(batch)   # return value is a tuple
+            preds.append(pred.cpu().numpy()) 
+            spatial_pred = self.spatial_features.pop().movedim(1, -1)[..., :7].cpu().numpy()
             spatial_preds.append(spatial_pred.reshape([spatial_pred.shape[0], -1]))
-            if use_v3:
-                pred_v3 = self.features.pop().detach().cpu().numpy()
-                preds_v3.append(pred_v3.reshape([pred_v3.shape[0], -1]))
         return (
-            np.concatenate(preds, axis=0),
-            np.concatenate(spatial_preds, axis=0),
-            np.concatenate(preds_v3, axis=0),
-        ) if use_v3 else (
             np.concatenate(preds, axis=0),
             np.concatenate(spatial_preds, axis=0),
         )
@@ -209,9 +178,8 @@ class Evaluator:
         for i in range(0, len(activations), self.softmax_batch_size):
             acts = activations[i : i + self.softmax_batch_size]
             acts = torch.from_numpy(acts).to(self.device)
-            with torch.no_grad():
-                softmax_output = self.inception_v3.fc(acts).detach().cpu().numpy()
-            softmax_out.append(softmax(softmax_output, axis=-1))
+            with torch.inference_mode():
+                softmax_out.append(acts.mm(self.inception.fc.weight.T).softmax(-1).cpu().numpy())
         preds = np.concatenate(softmax_out, axis=0)
         # https://github.com/openai/improved-gan/blob/4f5d1ec5c16a7eceb206f42bfc652693601e1d5c/inception_score/model.py#L46
         scores = []
@@ -400,28 +368,6 @@ class DistanceBlock:
 
     def __init__(self, device):
         self.device = device
-
-        # Initialize TF graph to calculate pairwise distances.
-        # with torch.no_grad():
-        #     self._features_batch1 = torch.zeros([1, 2048]).to(device)
-        #     self._features_batch2 = torch.zeros([1, 2048]).to(device)
-        #     distance_block_16 = _batch_pairwise_distances(
-        #         self._features_batch1.to(torch.float16),
-        #         self._features_batch2.to(torch.float16),
-        #     )
-        #     self.distance_block = torch.cond(
-        #         torch.all(torch.isfinite(distance_block_16)),
-        #         lambda: distance_block_16.to(torch.float32),
-        #         lambda: _batch_pairwise_distances(self._features_batch1, self._features_batch2),
-        #         (),
-        #     )
-
-        #     # Extra logic for less thans.
-        #     self._radii1 = torch.zeros([1, 1]).to(device)
-        #     self._radii2 = torch.zeros([1, 1]).to(device)
-        #     dist32 = self.distance_block[..., None]
-        #     self._batch_1_in = torch.any(dist32 <= self._radii2, axis=1)
-        #     self._batch_2_in = torch.any(dist32 <= self._radii1[:, None], axis=0)
 
     def pairwise_distances(self, U, V):
         """
