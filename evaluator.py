@@ -1,7 +1,7 @@
-"""PyTorch equaivalent to ADM's evaluation suite at <https://github.com/openai/guided-diffusion/tree/main/evaluations>.
-
-Modified from <https://github.com/lavinal712/ADM-evaluation-suite-pytorch/tree/main>.
 """
+PyTorch equaivalent to ADM's evaluation suite at <https://github.com/openai/guided-diffusion/tree/main/evaluations>.
+"""
+
 import argparse
 import io
 import warnings
@@ -139,7 +139,7 @@ class Evaluator:
         preds = []
         spatial_preds = []
         for batch in tqdm(batches):
-            batch = torch.from_numpy(batch).permute(0, 3, 1, 2).to(self.device)
+            batch = torch.from_numpy(batch.copy()).permute(0, 3, 1, 2).to(self.device)
             with torch.inference_mode():
                 pred, = self.inception(batch)   # return value is a tuple
             preds.append(pred.cpu().numpy()) 
