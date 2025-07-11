@@ -1,4 +1,4 @@
-"""PyTorch equaivalent to ADM's evaluation suit at <https://github.com/openai/guided-diffusion/tree/main/evaluations>.
+"""PyTorch equaivalent to ADM's evaluation suite at <https://github.com/openai/guided-diffusion/tree/main/evaluations>.
 
 Modified from <https://github.com/lavinal712/ADM-evaluation-suite-pytorch/tree/main>.
 """
